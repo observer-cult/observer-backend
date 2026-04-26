@@ -1,0 +1,197 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// User Profile
+model User {
+  id            String    @id @default(cuid())
+  address       String    @unique @db.VarChar(42)
+  username      String?   @unique
+  bio           String?
+  avatar        String?
+  tier          Int       @default(0)
+  obsBalance    String    @default("0") // Store as string to avoid precision issues
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  cults         Cult[]
+  cultMembers   CultMember[]
+  feedPosts     FeedPost[]
+  feedReactions FeedReaction[]
+  feedComments  FeedComment[]
+  transmissions Transmission[]
+  transmissionCloses TransmissionClose[]
+  nonces        Nonce[]
+  refreshTokens RefreshToken[]
+
+  @@index([address])
+  @@index([tier])
+}
+
+// Nonce for signature verification
+model Nonce {
+  id        String    @id @default(cuid())
+  address   String    @db.VarChar(42)
+  nonce     String
+  expiresAt DateTime
+  isUsed    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [address], references: [address], onDelete: Cascade)
+
+  @@index([address])
+  @@index([expiresAt])
+}
+
+// Refresh Token for JWT rotation
+model RefreshToken {
+  id          String    @id @default(cuid())
+  userAddress String    @db.VarChar(42)
+  token       String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+
+  @@index([userAddress])
+  @@index([expiresAt])
+}
+
+// Cult/Group
+model Cult {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  minTier       Int       @default(0)
+  creatorAddress String   @db.VarChar(42)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  creator       User      @relation(fields: [creatorAddress], references: [address], onDelete: Cascade)
+  members       CultMember[]
+  transmissions Transmission[]
+
+  @@index([minTier])
+  @@index([creatorAddress])
+}
+
+// Cult Membership
+model CultMember {
+  id         String    @id @default(cuid())
+  cultId     String
+  userAddress String   @db.VarChar(42)
+  joinedAt   DateTime  @default(now())
+
+  cult Cult  @relation(fields: [cultId], references: [id], onDelete: Cascade)
+  user User  @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+
+  @@unique([cultId, userAddress])
+  @@index([cultId])
+  @@index([userAddress])
+}
+
+// Feed Post
+model FeedPost {
+  id            String    @id @default(cuid())
+  userAddress   String    @db.VarChar(42)
+  content       String
+  tier          Int       @default(0) // Minimum tier to see this post
+  tokenMention  String?   // Optional token address mentioned
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  author        User      @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+  reactions     FeedReaction[]
+  comments      FeedComment[]
+
+  @@index([userAddress])
+  @@index([tier])
+  @@index([createdAt])
+}
+
+// Feed Reactions (Like, Fire, Eye)
+model FeedReaction {
+  id        String    @id @default(cuid())
+  postId    String
+  userAddress String @db.VarChar(42)
+  reactionType String // "like", "fire", "eye"
+  createdAt DateTime  @default(now())
+
+  post      FeedPost  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+
+  @@unique([postId, userAddress, reactionType])
+  @@index([postId])
+  @@index([userAddress])
+}
+
+// Feed Comments
+model FeedComment {
+  id        String    @id @default(cuid())
+  postId    String
+  userAddress String @db.VarChar(42)
+  content   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  post      FeedPost  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([userAddress])
+}
+
+// Transmission (Trading Signal/Call)
+model Transmission {
+  id              String    @id @default(cuid())
+  cultId          String?   // Optional: belongs to a cult
+  userAddress     String    @db.VarChar(42)
+  tokenAddress    String    @db.VarChar(42)
+  chain           String    // "ethereum", "polygon", "arbitrum", etc.
+  entryPrice      String    // BigInt as string
+  targetPrice     String    // BigInt as string
+  exitPrice       String?   // Set when closed
+  pnlPercent      Float?    // Calculated after close
+  isWin           Boolean?  // true = profit, false = loss
+  createdAt       DateTime  @default(now())
+  closedAt        DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  creator         User      @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+  cult            Cult?     @relation(fields: [cultId], references: [id], onDelete: SetNull)
+  closes          TransmissionClose[]
+
+  @@index([userAddress])
+  @@index([cultId])
+  @@index([tokenAddress])
+  @@index([createdAt])
+  @@index([closedAt])
+}
+
+// Transmission Close Record
+model TransmissionClose {
+  id              String    @id @default(cuid())
+  transmissionId  String
+  userAddress     String    @db.VarChar(42)
+  exitPrice       String    // BigInt as string
+  pnlPercent      Float
+  isWin           Boolean
+  closedAt        DateTime  @default(now())
+
+  transmission    Transmission @relation(fields: [transmissionId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userAddress], references: [address], onDelete: Cascade)
+
+  @@index([transmissionId])
+  @@index([userAddress])
+}
